@@ -1,17 +1,17 @@
-#**S**cheme m**ake**
+# **S**cheme m**ake**
 minimalistic build system writen in Racket
 using S-expressions as build rules and parsing via (read)
 
-##sakefile.scm example
+## sakefile.scm example
 ```scheme
 (target "sake" #:deps ("sake.rkt") #:cmd "raco exe -o sake sake.rkt")
 ```
 
-##Dependies
+## Dependies
  - Racket
  - (Optionaly) DrRacket
 
-##Ways to build > sake
+## Ways to build > sake
  1. Using DrRacket built-in interpreter 
  2. By command `raco exe -o sake sake.rkt`
 
