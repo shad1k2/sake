@@ -1,5 +1,5 @@
 # **S**cheme m**ake**
-minimalistic build system writen in Racket
+minimalistic build system written in Racket
 using S-expressions as build rules and parsing via (read)
 
 ## sakefile.scm example
@@ -7,7 +7,7 @@ using S-expressions as build rules and parsing via (read)
 (target "sake" #:deps ("sake.rkt") #:cmd "raco exe -o sake sake.rkt")
 ```
 
-## Dependies
+## Dependencies
  - Racket
  - (Optionaly) DrRacket
 
