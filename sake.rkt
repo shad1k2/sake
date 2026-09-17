@@ -23,6 +23,11 @@
         (loop (cons (parse-rule expr) accum))))
   (loop '()))
 
+;; λ find rule by target name in rules list
+(define (find-rule target-name rules)
+  (findf (λ (r) (string=? (rule-target r) target-name))
+         rules))
+
 ;; λ check files for modified
 (define (needs-rebuild? target-file deps)
   (cond
@@ -30,21 +35,28 @@
     [else
      (define target-mtime (file-or-directory-modify-seconds target-file))
      (ormap (λ (dep)
-              (and (file-exists? dep)
-                   (> (file-or-directory-modify-seconds dep) target-mtime)))
+              (cond
+                [(file-exists? dep)
+                 (> (file-or-directory-modify-seconds dep) target-mtime)]
+                [else #t]))
             deps)]))
 
-(define (build-rule r)
+(define (build-rule r all-rules)
   (define target (rule-target r))
   (define deps   (rule-deps r))
   (define cmd    (rule-cmd r))
 
-;; λ rebuild one or more files if modified and first build 
+  (for-each (λ (dep)
+              (define dep-rule (find-rule dep all-rules))
+              (when dep-rule
+                (build-rule dep-rule all-rules)))
+            deps)
+
   (if (needs-rebuild? target deps)
-      (let ([_ (printf "[SAKE] Building target: ~a...\n" target)]
-            [success? (system cmd)])
-        (unless success?
-          (error "[SAKE] Command failed:" cmd)))
+      (begin
+        (printf "[SAKE] Building target: ~a...\n" target)
+        (unless (system cmd)
+          (error 'sake "Command failed: ~a" cmd)))
       (printf "[SAKE] Target '~a' is up to date.\n" target)))
 
 ;; λ entry point
@@ -57,14 +69,14 @@
   
   (define target-name
     (if (null? args)
-       (rule-target (car rules))
-       (car args)))
+        (rule-target (car rules))
+        (car args)))
   
   (define target-rule 
-    (findf (λ (r) (equal? (rule-target r) target-name)) rules))
+    (find-rule target-name rules))
 
   (if target-rule
-      (build-rule target-rule)
+      (build-rule target-rule rules) 
       (error "[SAKE] Unknown target:" target-name)))
 
 (main)
