@@ -1,0 +1,52 @@
+\input texinfo
+@setfilename sake.info
+@settitle Sake Manual
+
+@copying
+Copyright @copyright{} 2026 shad1k1
+
+Permission is granted to copy, distribute and/or modify this document
+under the terms of the GNU Free Documentation License, Version 1.3
+or any later version published by the Free Software Foundation.
+@end copying
+
+@titlepage
+@title Sake User Manual
+@subtitle A minimalist build system written in GNU Guile
+@author shad1k1
+@page
+@insertcopying
+@end titlepage
+
+@node Top
+@top Sake Manual
+
+This manual is for Sake, a minimalist build system written in GNU Guile.
+
+@menu
+* Overview::          What is Sake?
+* Invocation::        How to run Sake.
+* Copying::           GNU Free Documentation License.
+@end menu
+
+@node Overview
+@chapter Overview
+
+Sake is a minimalist, high-performance build system written entirely
+in GNU Guile Scheme. It uses Scheme expressions to describe target 
+dependencies and build DAGs.
+
+@node Invocation
+@chapter Invocation
+
+To run Sake with a default @file{sakefile.scm}:
+
+@example
+sake
+@end example
+
+@node Copying
+@chapter Copying
+
+This manual is licensed under the GNU Free Documentation License.
+@bye

@@ -1,0 +1,268 @@
+@settitle Sake Manual
+
+@copying
+Copyright @copyright{} 2026 shad1k1
+
+Permission is granted to copy, distribute and/or modify this document
+under the terms of the GNU Free Documentation License, Version 1.3
+or any later version published by the Free Software Foundation.
+@end copying
+
+@titlepage
+@title Sake User Manual
+@subtitle A minimalist, Scheme-based build system in GNU Guile
+@author shad1k1
+@page
+@insertcopying
+@end titlepage
+
+@contents
+
+@node Top
+@top Sake Manual
+
+This manual is the complete reference for Sake, a minimalist build system 
+written in GNU Guile Scheme.
+
+@menu
+* Overview::                What is Sake and its design goals.
+* Scheme Quickstart::       A brief intro to Scheme syntax for Sake users.
+* Mapping Make Concepts::   How common GNU Make features map to Sake.
+* Writing Sakefiles::       Complete specification of sakefile syntax.
+* Environment Variables::   Defining variables with environment fallbacks.
+* Rules and Targets::       Defining targets, dependencies, and commands.
+* Pattern Rules::           Generating batch rules without Make syntax.
+* Abstract Targets::        Handling phony/pseudo targets like clean.
+* Practical Example::       Building GNU Nano with Sake.
+* Invocation::              Command-line options and usage.
+* Copying::                 GNU Free Documentation License.
+@end menu
+
+@node Overview
+@chapter Overview
+
+Sake is a build system designed to replace classical Makefile-based tools 
+with declarative GNU Guile Scheme code. Instead of relying on a custom, 
+macro-heavy DSL, Sake leverages Scheme procedures to construct a Directed 
+Acyclic Graph (DAG) of build targets and their dependencies.
+
+Key concepts in Sake:
+@itemize @bullet
+@item
+@strong{Target}: A named goal, usually corresponding to an output file or a pseudo-target.
+@item
+@strong{Dependencies}: A list of files or other targets that must be up to date before the target is processed.
+@item
+@strong{Recipe}: A shell command executed to update the target when any dependency is newer than the target file.
+@end itemize
+
+@node Scheme Quickstart
+@chapter Scheme Quickstart for Sake Users
+
+You do @strong{not} need prior knowledge of Scheme or functional programming to write @file{sakefile.scm} files. Sake uses a tiny subset of Scheme.
+
+@section Parentheses and Procedure Calls
+
+In Scheme, operations are written inside parentheses, with the action/procedure first:
+
+@example
+;; In C/Shell: cc = "gcc"
+;; In Scheme(sake):
+(sakevar cc "gcc")
+
+;; Calling a procedure: (procedure-name arg1 arg2)
+(target "main.o" #:deps '("main.c") #:cmd "gcc -c main.c -o main.o")
+@end example
+
+@section Data Types Used in Sake
+
+@itemize @bullet
+@item
+@strong{Strings}: Enclosed in double quotes, e.g., @code{"gcc"} or @code{"main.o"}.
+@item
+@strong{Lists}: A collection of items preceded by a single quote, e.g., @code{'("file1.c" "file2.c")} or @code{'()}.
+@item
+@strong{Keywords}: Words starting with @code{#:}, used for named arguments like @code{#:deps} and @code{#:cmd}.
+@end itemize
+
+@node Mapping Make Concepts
+@chapter Mapping GNU Make Concepts to Sake
+
+Users familiar with GNU Make can translate their build concepts directly into Sake:
+
+@multitable @columnfractions .30 .70
+@headitem GNU Make Concept @tab Sake Equivalent
+@item Variable Definition (@code{CC = gcc}) @tab @code{(define cc "gcc")}
+@item Conditional Default (@code{CFLAGS ?= -O2}) @tab @code{(sakevar cflags "-O2")}
+@item Default Goal (@code{all: main}) @tab First defined @code{(target "all" ...)}
+@item Phony Target (@code{.PHONY: clean}) @tab Regular target with non-existent file output
+@item Pattern Rule (@code{%.o: %.c}) @tab Scheme loop using @code{for-each} or @code{map}
+@item Automatic Variables (@code{\(@@}, @code{\)<}) @tab String formatting via @code{(format #f ...)}
+@end multitable
+
+@node Writing Sakefiles
+@chapter Writing Sakefiles
+
+A @file{sakefile.scm} is an executable Scheme script interpreted by GNU Guile during the Sake build pass.
+
+Standard Scheme definitions, variables, and Guile string formatting utilities (@code{format}, @code{string-join}, @code{map}) are fully accessible inside a @file{sakefile.scm} to assemble build parameters dynamically.
+
+@node Environment Variables
+@chapter Environment Variables and @code{sakevar}
+
+In traditional Makefiles, variables automatically inherit values from shell environment variables with default fallbacks (e.g., @code{CC ?= gcc}).
+
+To keep syntax concise and avoid verbose calls to @code{or} and @code{getenv}, Sake provides the @code{sakevar} macro.
+
+@deffn {Macro} sakevar variable default-value
+Binds @var{variable} to the value of its corresponding uppercase shell environment variable. If the environment variable is unset or empty, it falls back to @var{default-value}.
+@end deffn
+
+For example:
+
+@example
+(sakevar cc "gcc")
+(sakevar cflags "-O2 -Wall")
+(sakevar ldflags "-lncursesw")
+@end example
+
+This macro automatically inspects the environment for @env{CC}, @env{CFLAGS}, and @env{LDFLAGS}, expanding at compile time to:
+
+@example
+(define cc (or (getenv "CC") "gcc"))
+(define cflags (or (getenv "CFLAGS") "-O2 -Wall"))
+(define ldflags (or (getenv "LDFLAGS") "-lncursesw"))
+@end example
+
+@node Rules and Targets
+@chapter Rules and Targets
+
+@section The @code{target} Procedure
+
+The primary primitive in Sake is the @code{target} procedure. It registers a node in the internal build graph.
+
+@deffn {Scheme Procedure} target name [#:deps deps] [#:cmd cmd]
+Registers a build target named @var{name}.
+
+@itemize @bullet
+@item
+@var{name}: A string naming the target file or abstract goal (e.g., @code{"all"}).
+@item
+@var{#:deps}: A list of strings representing file or target dependencies. Defaults to @code{'()}.
+@item
+@var{#:cmd}: A string containing the shell command to execute when the target is out of date. Defaults to @code{""}.
+@end itemize
+@end deffn
+
+@section Dependency Evaluation
+
+Sake evaluates target modification times against its dependencies. A target is considered out of date and recompiled if:
+@enumerate
+@item
+The target file does not exist on disk.
+@item
+Any file listed in @var{#:deps} has a newer timestamp than the target file.
+@item
+A dependency is a pseudo-target that was executed in the current run.
+@end enumerate
+
+@node Pattern Rules
+@chapter Pattern Rules and Batch Generation
+
+In GNU Make, pattern rules use implicit match syntax like @code{%.o: %.c}. In Sake, pattern generation is expressed procedurally using Guile's @code{for-each} procedure.
+
+@example
+(define sources '("main" "utils" "parser"))
+
+;; Generate rules for compiling each .c file into a .o file
+(for-each
+  (lambda (name)
+    (let ((c-file (format #f "~a.c" name))
+          (o-file (format #f "~a.o" name)))
+      (target o-file
+              #:deps (list c-file)
+              #:cmd (format #f "~a ~a -c ~a -o ~a" cc cflags c-file o-file))))
+  sources)
+@end example
+
+This explicit approach eliminates implicit rule resolution bugs while retaining the concise nature of pattern rules.
+
+@node Abstract Targets
+@chapter Abstract (Phony) Targets
+
+In GNU Make, targets that do not produce output files require a special @code{.PHONY} declaration. In Sake, abstract goals such as @code{"clean"} or @code{"install"} require no special syntax. Because their corresponding files do not exist on disk, Sake automatically considers them out of date and executes their recipe command whenever invoked.
+
+@example
+(target "clean"
+        #:deps '()
+        #:cmd "rm -f *.o my_program")
+@end example
+
+@node Practical Example
+@chapter Practical Example: Building GNU Nano
+
+Below is a complete @file{sakefile.scm} used to compile @code{GNU Nano}:
+
+@example
+(sakevar cc "gcc")
+(sakevar cflags "-O2 -Wall -I. -I.. -I../lib -DHAVE_CONFIG_H -DLOCALEDIR=\\\"/usr/local/share/locale\\\" -DSYSCONFDIR=\\\"/etc\\\"")
+(sakevar ldflags "-lncursesw -lmagic")
+
+(define nano-sources
+  '("browser" "chars" "color" "cut" "files" "global"
+    "help" "history" "move" "nano" "prompt" "rcfile"
+    "search" "text" "utils" "winio"))
+
+(define nano-objects
+  (map (lambda (name) (format #f "~a.o" name)) nano-sources))
+
+(target "all"
+        #:deps '("nano")
+        #:cmd "")
+
+(target "revision.h"
+        #:deps '()
+        #:cmd "echo '#define REVISION \"git-build\"' | cmp -s - revision.h || echo '#define REVISION \"git-build\"' > revision.h")
+
+(target "../lib/libgnu.a"
+        #:deps '()
+        #:cmd "make -C ../lib")
+
+(for-each
+  (lambda (name)
+    (let ((c-file (format #f "~a.c" name))
+          (o-file (format #f "~a.o" name)))
+      (target o-file
+              #:deps (list c-file "revision.h" "../config.h" "../lib/libgnu.a")
+              #:cmd (format #f "~a ~a -c ~a -o ~a" cc cflags c-file o-file))))
+  nano-sources)
+
+(target "nano"
+        #:deps (cons "../lib/libgnu.a" nano-objects)
+        #:cmd (format #f "~a -o nano ~a ../lib/libgnu.a ~a"
+                      cc
+                      (string-join nano-objects " ")
+                      ldflags))
+
+(target "install-symlink"
+        #:deps '("nano")
+        #:cmd "ln -sf nano rnano")
+@end example
+
+@node Invocation
+@chapter Invocation
+
+Sake is invoked from the command line in the directory containing @file{sakefile.scm}:
+
+@example
+sake [TARGET]
+@end example
+
+If no @var{TARGET} is specified, Sake defaults to building the first registered target (usually @code{"all"}).
+
+@node Copying
+@chapter Copying
+
+This manual is licensed under the GNU Free Documentation License, Version 1.3 or any later version published by the Free Software Foundation.
+
+@bye

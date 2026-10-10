@@ -1,0 +1,319 @@
+This is sake.info, produced by makeinfo version 7.3 from sake.texi.
+
+Copyright © 2026 shad1k1
+
+   Permission is granted to copy, distribute and/or modify this document
+under the terms of the GNU Free Documentation License, Version 1.3 or
+any later version published by the Free Software Foundation.
+
+
+File: sake.info,  Node: Top,  Next: Overview,  Up: (dir)
+
+Sake Manual
+***********
+
+This manual is the complete reference for Sake, a minimalist build
+system written in GNU Guile Scheme.
+
+* Menu:
+
+* Overview::                What is Sake and its design goals.
+* Scheme Quickstart::       A brief intro to Scheme syntax for Sake users.
+* Mapping Make Concepts::   How common GNU Make features map to Sake.
+* Writing Sakefiles::       Complete specification of sakefile syntax.
+* Environment Variables::   Defining variables with environment fallbacks.
+* Rules and Targets::       Defining targets, dependencies, and commands.
+* Pattern Rules::           Generating batch rules without Make syntax.
+* Abstract Targets::        Handling phony/pseudo targets like clean.
+* Practical Example::       Building GNU Nano with Sake.
+* Invocation::              Command-line options and usage.
+* Copying::                 GNU Free Documentation License.
+
+
+File: sake.info,  Node: Overview,  Next: Scheme Quickstart,  Prev: Top,  Up: Top
+
+1 Overview
+**********
+
+Sake is a build system designed to replace classical Makefile-based
+tools with declarative GNU Guile Scheme code.  Instead of relying on a
+custom, macro-heavy DSL, Sake leverages Scheme procedures to construct a
+Directed Acyclic Graph (DAG) of build targets and their dependencies.
+
+   Key concepts in Sake:
+   • *Target*: A named goal, usually corresponding to an output file or
+     a pseudo-target.
+   • *Dependencies*: A list of files or other targets that must be up to
+     date before the target is processed.
+   • *Recipe*: A shell command executed to update the target when any
+     dependency is newer than the target file.
+
+
+File: sake.info,  Node: Scheme Quickstart,  Next: Mapping Make Concepts,  Prev: Overview,  Up: Top
+
+2 Scheme Quickstart for Sake Users
+**********************************
+
+You do *not* need prior knowledge of Scheme or functional programming to
+write ‘sakefile.scm’ files.  Sake uses a tiny subset of Scheme.
+
+2.1 Parentheses and Procedure Calls
+===================================
+
+In Scheme, operations are written inside parentheses, with the
+action/procedure first:
+
+     ;; In C/Shell: cc = "gcc"
+     ;; In Scheme(sake):
+     (sakevar cc "gcc")
+
+     ;; Calling a procedure: (procedure-name arg1 arg2)
+     (target "main.o" #:deps '("main.c") #:cmd "gcc -c main.c -o main.o")
+
+2.2 Data Types Used in Sake
+===========================
+
+   • *Strings*: Enclosed in double quotes, e.g., ‘"gcc"’ or ‘"main.o"’.
+   • *Lists*: A collection of items preceded by a single quote, e.g.,
+     ‘'("file1.c" "file2.c")’ or ‘'()’.
+   • *Keywords*: Words starting with ‘#:’, used for named arguments like
+     ‘#:deps’ and ‘#:cmd’.
+
+
+File: sake.info,  Node: Mapping Make Concepts,  Next: Writing Sakefiles,  Prev: Scheme Quickstart,  Up: Top
+
+3 Mapping GNU Make Concepts to Sake
+***********************************
+
+Users familiar with GNU Make can translate their build concepts directly
+into Sake:
+
+GNU Make Concept       Sake Equivalent
+--------------------------------------------------------------------------
+Variable Definition    ‘(define cc "gcc")’
+(‘CC = gcc’)
+Conditional Default    ‘(sakevar cflags "-O2")’
+(‘CFLAGS ?= -O2’)
+Default Goal (‘all:    First defined ‘(target "all" ...)’
+main’)
+Phony Target           Regular target with non-existent file output
+(‘.PHONY: clean’)
+Pattern Rule (‘%.o:    Scheme loop using ‘for-each’ or ‘map’
+%.c’)
+Automatic Variables    String formatting via ‘(format #f ...)’
+(‘\(@’, ‘\)<’)
+
+
+File: sake.info,  Node: Writing Sakefiles,  Next: Environment Variables,  Prev: Mapping Make Concepts,  Up: Top
+
+4 Writing Sakefiles
+*******************
+
+A ‘sakefile.scm’ is an executable Scheme script interpreted by GNU Guile
+during the Sake build pass.
+
+   Standard Scheme definitions, variables, and Guile string formatting
+utilities (‘format’, ‘string-join’, ‘map’) are fully accessible inside a
+‘sakefile.scm’ to assemble build parameters dynamically.
+
+
+File: sake.info,  Node: Environment Variables,  Next: Rules and Targets,  Prev: Writing Sakefiles,  Up: Top
+
+5 Environment Variables and ‘sakevar’
+*************************************
+
+In traditional Makefiles, variables automatically inherit values from
+shell environment variables with default fallbacks (e.g., ‘CC ?= gcc’).
+
+   To keep syntax concise and avoid verbose calls to ‘or’ and ‘getenv’,
+Sake provides the ‘sakevar’ macro.
+
+ -- Macro: sakevar variable default-value
+     Binds VARIABLE to the value of its corresponding uppercase shell
+     environment variable.  If the environment variable is unset or
+     empty, it falls back to DEFAULT-VALUE.
+
+   For example:
+
+     (sakevar cc "gcc")
+     (sakevar cflags "-O2 -Wall")
+     (sakevar ldflags "-lncursesw")
+
+   This macro automatically inspects the environment for ‘CC’, ‘CFLAGS’,
+and ‘LDFLAGS’, expanding at compile time to:
+
+     (define cc (or (getenv "CC") "gcc"))
+     (define cflags (or (getenv "CFLAGS") "-O2 -Wall"))
+     (define ldflags (or (getenv "LDFLAGS") "-lncursesw"))
+
+
+File: sake.info,  Node: Rules and Targets,  Next: Pattern Rules,  Prev: Environment Variables,  Up: Top
+
+6 Rules and Targets
+*******************
+
+6.1 The ‘target’ Procedure
+==========================
+
+The primary primitive in Sake is the ‘target’ procedure.  It registers a
+node in the internal build graph.
+
+ -- Scheme Procedure: target name [#:deps deps] [#:cmd cmd]
+     Registers a build target named NAME.
+
+        • NAME: A string naming the target file or abstract goal (e.g.,
+          ‘"all"’).
+        • #:DEPS: A list of strings representing file or target
+          dependencies.  Defaults to ‘'()’.
+        • #:CMD: A string containing the shell command to execute when
+          the target is out of date.  Defaults to ‘""’.
+
+6.2 Dependency Evaluation
+=========================
+
+Sake evaluates target modification times against its dependencies.  A
+target is considered out of date and recompiled if:
+  1. The target file does not exist on disk.
+  2. Any file listed in #:DEPS has a newer timestamp than the target
+     file.
+  3. A dependency is a pseudo-target that was executed in the current
+     run.
+
+
+File: sake.info,  Node: Pattern Rules,  Next: Abstract Targets,  Prev: Rules and Targets,  Up: Top
+
+7 Pattern Rules and Batch Generation
+************************************
+
+In GNU Make, pattern rules use implicit match syntax like ‘%.o: %.c’.
+In Sake, pattern generation is expressed procedurally using Guile's
+‘for-each’ procedure.
+
+     (define sources '("main" "utils" "parser"))
+
+     ;; Generate rules for compiling each .c file into a .o file
+     (for-each
+       (lambda (name)
+         (let ((c-file (format #f "~a.c" name))
+               (o-file (format #f "~a.o" name)))
+           (target o-file
+                   #:deps (list c-file)
+                   #:cmd (format #f "~a ~a -c ~a -o ~a" cc cflags c-file o-file))))
+       sources)
+
+   This explicit approach eliminates implicit rule resolution bugs while
+retaining the concise nature of pattern rules.
+
+
+File: sake.info,  Node: Abstract Targets,  Next: Practical Example,  Prev: Pattern Rules,  Up: Top
+
+8 Abstract (Phony) Targets
+**************************
+
+In GNU Make, targets that do not produce output files require a special
+‘.PHONY’ declaration.  In Sake, abstract goals such as ‘"clean"’ or
+‘"install"’ require no special syntax.  Because their corresponding
+files do not exist on disk, Sake automatically considers them out of
+date and executes their recipe command whenever invoked.
+
+     (target "clean"
+             #:deps '()
+             #:cmd "rm -f *.o my_program")
+
+
+File: sake.info,  Node: Practical Example,  Next: Invocation,  Prev: Abstract Targets,  Up: Top
+
+9 Practical Example: Building GNU Nano
+**************************************
+
+Below is a complete ‘sakefile.scm’ used to compile ‘GNU Nano’:
+
+     (sakevar cc "gcc")
+     (sakevar cflags "-O2 -Wall -I. -I.. -I../lib -DHAVE_CONFIG_H -DLOCALEDIR=\\\"/usr/local/share/locale\\\" -DSYSCONFDIR=\\\"/etc\\\"")
+     (sakevar ldflags "-lncursesw -lmagic")
+
+     (define nano-sources
+       '("browser" "chars" "color" "cut" "files" "global"
+         "help" "history" "move" "nano" "prompt" "rcfile"
+         "search" "text" "utils" "winio"))
+
+     (define nano-objects
+       (map (lambda (name) (format #f "~a.o" name)) nano-sources))
+
+     (target "all"
+             #:deps '("nano")
+             #:cmd "")
+
+     (target "revision.h"
+             #:deps '()
+             #:cmd "echo '#define REVISION \"git-build\"' | cmp -s - revision.h || echo '#define REVISION \"git-build\"' > revision.h")
+
+     (target "../lib/libgnu.a"
+             #:deps '()
+             #:cmd "make -C ../lib")
+
+     (for-each
+       (lambda (name)
+         (let ((c-file (format #f "~a.c" name))
+               (o-file (format #f "~a.o" name)))
+           (target o-file
+                   #:deps (list c-file "revision.h" "../config.h" "../lib/libgnu.a")
+                   #:cmd (format #f "~a ~a -c ~a -o ~a" cc cflags c-file o-file))))
+       nano-sources)
+
+     (target "nano"
+             #:deps (cons "../lib/libgnu.a" nano-objects)
+             #:cmd (format #f "~a -o nano ~a ../lib/libgnu.a ~a"
+                           cc
+                           (string-join nano-objects " ")
+                           ldflags))
+
+     (target "install-symlink"
+             #:deps '("nano")
+             #:cmd "ln -sf nano rnano")
+
+
+File: sake.info,  Node: Invocation,  Next: Copying,  Prev: Practical Example,  Up: Top
+
+10 Invocation
+*************
+
+Sake is invoked from the command line in the directory containing
+‘sakefile.scm’:
+
+     sake [TARGET]
+
+   If no TARGET is specified, Sake defaults to building the first
+registered target (usually ‘"all"’).
+
+
+File: sake.info,  Node: Copying,  Prev: Invocation,  Up: Top
+
+11 Copying
+**********
+
+This manual is licensed under the GNU Free Documentation License,
+Version 1.3 or any later version published by the Free Software
+Foundation.
+
+
+Tag Table:
+Node: Top301
+Node: Overview1247
+Node: Scheme Quickstart1995
+Node: Mapping Make Concepts3057
+Node: Writing Sakefiles3911
+Node: Environment Variables4391
+Node: Rules and Targets5476
+Node: Pattern Rules6625
+Node: Abstract Targets7508
+Node: Practical Example8101
+Node: Invocation9913
+Node: Copying10247
+
+End Tag Table
+
+
+Local Variables:
+coding: utf-8
+End:

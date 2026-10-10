@@ -1,0 +1,133 @@
+#!/usr/bin/env guile
+!#
+
+;; Sake - Minimalist build system written in GNU Guile.
+;; Copyright (C) 2026 shad1k1
+;;
+;; This program is free software: you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; λ modules definition
+(define-module (sake)
+  #:use-module (ice-9 ftw)         
+  #:use-module (ice-9 match)       
+  #:use-module (ice-9 format)      
+  #:use-module (ice-9 getopt-long) 
+  #:use-module (ice-9 popen)       
+  #:use-module (srfi srfi-1)
+  #:use-module (srfi srfi-9)
+  #:use-module (srfi srfi-13)      
+  #:export (main target sakevar))
+
+;; Expand (sakevar var default) into a definition that checks $VAR.
+;; Converts the variable symbol to an uppercase string at expansion time.
+(define-syntax sakevar
+  (lambda (x)
+    (syntax-case x ()
+      ((_ var default)
+       (let* ((sym (syntax->datum #'var))
+              (env-str (string-upcase (symbol->string sym))))
+         #`(define var (or (getenv #,env-str) default)))))))
+
+;; λ build rule structure
+(define-record-type rule
+  (mk-rule target deps cmd)
+  rule?
+  (target rule-target)
+  (deps   rule-deps)
+  (cmd    rule-cmd))                                  
+
+;; Global registry to collect rules declared during evaluation of sakefile.scm.
+(define *registered-rules* '())
+
+;; Public interface procedure to define build targets within sakefile.scm.
+;; NAME is the identifier string of the target.
+;; DEPS is a list of dependency file path strings (defaults to empty list).
+;; CMD is the shell command string to execute for building the target.
+(define* (target name #:key (deps '()) (cmd ""))
+  (set! *registered-rules*
+        (cons (mk-rule name deps cmd) *registered-rules*)))
+
+;; Load and evaluate the Scheme file at FILEPATH in the current environment.
+;; Evaluates top-level Scheme expressions (defines, loops, macros) and populates
+;; the global rule registry via 'target' procedure calls.
+;; Returns a list of records in the order they were defined.
+(define (load-sakefile filepath)
+  (set! *registered-rules* '())
+  (load (canonicalize-path filepath))
+  (reverse *registered-rules*))
+
+;; Search for a rule named TARGET-NAME in the list RULES.
+;; TARGET-NAME is a string matching the target identifier.
+;; Returns the matching record, or #f if no such rule exists.
+(define (find-rule target-name rules)
+  (find (lambda (r) (string=? (rule-target r) target-name))
+        rules))
+
+;; Return the last modification time (mtime) of FILE as an integer timestamp.
+;; Assumes FILE exists on the filesystem; raises an exception via 'stat' otherwise.
+(define (mtime file)
+  (stat:mtime (stat file)))
+
+;; Determine whether TARGET-FILE needs to be rebuilt based on its DEPS.
+;; DEPS is a list of file paths (strings) that TARGET-FILE depends on.
+;; Returns #t if:
+;;   1. TARGET-FILE does not exist on disk, or
+;;   2. Any dependency in DEPS is newer than TARGET-FILE.
+;; Returns #f if TARGET-FILE is up to date relative to all existing dependencies.
+(define (needs-rebuild? target-file deps)
+  (if (not (file-exists? target-file))
+      #t
+      (let ((target-mtime (mtime target-file)))
+        (any (lambda (dep)
+               (if (file-exists? dep)
+                   (> (mtime dep) target-mtime)
+                   #t))
+             deps))))
+
+;; Recursively resolve dependencies and build rule R using ALL-RULES context.
+;; First triggers recursive builds for all dependencies listed in R.
+;; Then checks if R's target requires a rebuild using 'needs-rebuild?'.
+;; If a rebuild is necessary, executes R's command string via system shell.
+;; Raises an error if the shell command returns a non-zero exit code.
+(define (build-rule r all-rules)
+  (let ((target (rule-target r))
+        (deps   (rule-deps r))
+        (cmd    (rule-cmd r)))
+
+    (for-each (lambda (dep)
+                (let ((dep-rule (find-rule dep all-rules)))
+                  (when dep-rule
+                    (build-rule dep-rule all-rules))))
+              deps)
+
+    (if (needs-rebuild? target deps)
+        (begin
+          (format #t "[SAKE] Building target: ~a...\n" target)
+          (unless (zero? (system cmd))
+            (error "[SAKE] Command failed:" cmd)))
+        (format #t "[SAKE] Target '~a' is up to date.\n" target))))
+
+;; Entry point for the Sake build tool CLI executable.
+;; Reads command line arguments to identify the requested target.
+;; Evaluates 'sakefile.scm' in the current working directory, constructs
+;; the build rule tree, and executes targets in dependency order.
+(define (main)
+  (let* ((args (cdr (command-line)))
+         (rules (load-sakefile "sakefile.scm")))
+     
+    (when (null? rules)
+      (error "[SAKE] sakefile.scm is empty or contains no rules"))
+     
+    (let* ((target-name (if (null? args)
+                            (rule-target (car rules))
+                            (car args)))
+           (target-rule (find-rule target-name rules)))
+       
+      (if target-rule
+          (build-rule target-rule rules)
+          (error "[SAKE] Unknown target:" target-name)))))
+
+(main)

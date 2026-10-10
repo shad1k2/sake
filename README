@@ -1,0 +1,80 @@
+Sake - A minimalist build system written in GNU Guile
+
+Copyright (C) 2026 shad1k1 gamerwotyt@gmail.com
+
+Copying and distribution of this file, with or without modification,
+are permitted in any medium without royalty provided the copyright
+notice and this notice are preserved.  This file is offered as-is,
+without warranty of any kind.
+
+===============================================================================
+
+ABOUT
+-----
+Sake is a build automation tool written in GNU Guile Scheme, similar in
+function to GNU Make.
+
+In Sake, a "build" process consists of creating or updating target files
+when their prerequisite files have changed. Sake reads a configuration file
+named sakefile.scm, which defines targets, dependencies, and build
+commands using Guile S-expressions.
+
+For each rule, Sake inspects the filesystem modification times (mtime):
+
+1. If a target file does not exist, Sake runs the specified command.
+
+2. If any dependency is newer than the target file, Sake runs the command.
+
+3. If the target file is up to date relative to all dependencies, the
+command is skipped.
+
+Sake recursively resolves dependency chains before executing commands.
+
+Sake is free software, distributed under the terms of the GNU General 
+Public License version 3 or (at your option) any later version (GPLv3+).
+
+USAGE EXAMPLE
+-------------
+A simple sakefile.scm for compiling a C program:
+
+(target "main"
+#:deps '("main.c" "utils.c")
+#:cmd "gcc -o main main.c utils.c")
+
+(target "clean"
+#:cmd "rm -f main")
+
+Run Sake to build the default (first) target:
+sake
+
+Or build a specific target:
+sake clean
+
+DEPENDENCIES
+------------
+To run and build Sake, you need:
+  - GNU Guile 3.0 or later
+  - Standard POSIX utilities (sh, coreutils)
+
+
+QUICK START
+-----------
+Bootstrap the project:
+   ./bootstrap.sh
+
+DOCUMENTATION
+-------------
+Complete documentation for Sake is available in Texinfo format.
+To read the manual locally:
+
+     info doc/sake.info
+
+Or build the documentation from source:
+
+     makeinfo doc/sake.texi
+
+
+REPORTING BUGS
+--------------
+Please send bug reports and comments to:
+  gamerwotyt@gmail.com
